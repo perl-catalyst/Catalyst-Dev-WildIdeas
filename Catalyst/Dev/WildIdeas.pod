@@ -1,5 +1,9 @@
 package Catalyst::Dev::WildIdeas;
 
+=head1 Description
+
+Brain dump of possible tasks for L<Catalyst> for summer 2013 and beyond.
+
 =head1 Fix ModPerl Support
 
 When we introduced native PSGI in Catalyst 5.900xx we did our best to maintain
@@ -292,7 +296,7 @@ For this project to be successful, one would need three test cases.  One that
 should the default working as expected with no configuration.  Second and third
 demonstrating the ability to override the default as expected in ->config or
 using a configuration plugin like L<ConfigLoader> (third test should skip if
-L<ConfigLoader is not present).  In addition all existing tests should pass
+L<ConfigLoader> is not present).  In addition all existing tests should pass
 and documentation updated.  We could also remove this as a default built by
 the project skeleton in L<Catalyst::Devel>.
 
