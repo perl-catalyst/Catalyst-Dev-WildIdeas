@@ -335,7 +335,7 @@ the controller and action level.
 We should have good use case tests for some of the more popular and commonly
 used middleware.
 
-=head1 $c->response should not be changable 
+=head1 $c->response should not be changable, offer a new approach
 
 Although in some cases on older versions of L<Catalyst> setting
 $c->response($res) manually would seem to work, we can't really support this
@@ -348,6 +348,87 @@ want and that it interferes with core development as a sort of dark API,
 lets start warning when people try to set $c->response, and ideally some docs
 outlining strategies for a proper way to do this, with appropriate caveats
 regarding streaming, etc.
+
+For bonus points, we could create some utility to set the Catalyst::Response
+from an existing acceptable common standard, such as L<HTTP::Response>.
+
+See L<HTTP::Message::PSGI> as an interesting approach to solving this (and
+also see L<Catalyst::Action::FromPSGI> for how to set a L<Catalyst::Response>
+from an existing L<HTTP::Response>.  It might even be great to have utility
+methods to set the L<Catalyst::Response> from a few of the more common
+responses, such as L<HTTP::Response>, a PSGI coderef, or an object that
+supports ->to_app or ->to_psgi, etc.  If we are very clever we could probably
+properly support streaming with this.
+
+For example (approaches to consider)
+
+    $c->response->from_http_response($http_response);
+    $c->response->from_plack_response($plack_response);
+
+=head1 Catalyst::Plugin::SubRequest is bust, we should core it.
+
+L<Catalyst::Plugin::SubRequest> has been 'tricky' to get right over the years.
+Tricky enough that we are loath to core it, yet enough people use it that if
+we bust it with a new release of L<Catalyst> we end up fixing it anyway.
+
+Since we can't really just ignore it, lets core a limited set of the features
+that this plugin offers, which should cover enough of the use cases as to get
+people to stop using the existing plugin.  We could probably combine the 
+approach take in L<Plack::Client> (see in particular L<Plack::Client::Backend::psgi_local>)
+with some of the stuff we see over at: L<HTTP::Message::PSGI> and possible
+some inspiration from L<Catalyst::Action::FromPSGI> to actually get something
+that doesnt' suck. Here's a possible API:
+
+    my $http_response = $c->subrequest($url, $params); # implicit GET
+    my $http_response = $c->subrequest($http_request); #custom request using HTTP::Request
+
+In this case we'd just use HTTP::Message as the transport format, and let you
+deal with copying over that to your L<Catalyst::Response> yourself (but see the
+previous todo item for thoughts on helper methods for that).
+
+So we'd make the API more simple, and don't support the 'set the stash' and just
+use a stable tranport API like L<HTTP::Message>.  This should cover most of the
+rationally supportable cases people want a subrequest for and give us code we feel
+is supportable over the long term (and in core so we can keep an eye on it)
+
+Reach goals could include setting a $c->config value or somesuch as to force
+the subrequest to use a 'real' request via LWP or similar for troublesome
+situations (or perhaps more API like $c->subrequest_local and $c->subrequest_remote)
+and maybe supporting L<Web::Request> / L<Web::Response> since that seems to do
+better support for streaming out of the box and maybe L<Plack::Request>,
+L<Plack::Response> even though Miyagawa says please don't.
+
+B<Question:> Should we care now about asynchronicity or can that be deferred for
+a later time (does deferring it now paint us into a corner...)
+
+=head1 Support other common content body types in request
+
+The fact that L<Catalyst> doesn't out of the box support body parameters other
+than classic HTML forms is a bit atavistic.  On the other hand, the plethora
+of content types (as well as the API approach) we see in the oddly named
+L<Catalyst::Action::REST> is probably a bit too far.  It seems the web
+community has consolodated around JSON, so supporting that with the pure perl
+JSON parse (but use an XS version if available) as well as having a decent
+API allowing one to register at a global level data parsing Handlers for
+various content types would be good.
+
+For example, given a JSON post
+
+    my $params = $c->request->data; # JSON decoding by default
+
+For example, adding a new handler
+
+    $c->register_data_handler( 'application/foo' => sub { decode_foo($_) });
+
+Hopefully this feature will start (not silence) a conversation about how to
+offer a more fine grained, controller or action level API for this as well.
+In other words this is support for work out of the box and with simple prototyping
+but we'd want people to consider the full constellation of possible approaches.
+
+B<Question:> Should we be able to register global data handlers via $c->config?
+
+B<Question:> Should we care now about asynchronicity or can that be deferred for
+a later time (does deferring it now paint us into a corner...)
 
 =head1 Catalyst::Controller should set @INC and load all needed imports
 
@@ -372,7 +453,6 @@ could just do
 
     MyApp::Web::Controller::User;
 
-    use Moose;
     use Catalyst::Controller;
 
     ## code, code, code
@@ -399,6 +479,17 @@ The main downsides is that it subtly moves us away from the idea that a
 controller is just a plain old Perl class, and that there may be other and more
 carefully scoped solutions to the problem given.
 
+B<Note> This idea probably needs more discussion, for example I assume we don't
+want to import the standard Moose keywords, but how are we going to make it
+easy for people that want to plugin new keyword imports do so.
+
+=head1 PROTOYPE:  Do something sane with action return values
+
+  TBD, but see https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
+
+=head1 PROTOTYPE:  Method Signature dependency injection
+
+  TBD, but see https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
 =cut
 
 
