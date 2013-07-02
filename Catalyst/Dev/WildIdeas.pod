@@ -1,0 +1,400 @@
+package Catalyst::Dev::WildIdeas;
+
+=head1 Fix ModPerl Support
+
+When we introduced native PSGI in Catalyst 5.900xx we did our best to maintain
+backwards compatibility while meeting our goal of extracting all the logic that
+goes into connecting your application to a handler, be it Starman, FastCGI and
+even Mod Perl.  However in order to support the classic Mod Perl 'use this
+Catalyst Application as an Apache handler' it was necessary to port over some
+of the engine related logic and maintain it in the C<Catalyst.pm> class.  It is
+somewhat undesirable to leak this logic into the class since it places some
+additional maintainance requirement on the core team. Additionally, we failed
+to include the $c->apache method in our port which, undesirable and incorrect
+as it may be, introduced a blocking incompatibility for people using Catalyst
+with Mod Perl. We would like to isolate ModPerl support in Catalyst while
+maintaining backcompat over a clear depracation cycle.  So I propose:
+
+=over 4
+
+=item Promote 'new style' PSGI Apache Configuration
+
+For people who still desire to use ModPerl, or who have legacy applications
+that require it, promote the idea of using the Plack approach for running your
+PSGI application under ModPerl.  In other words we would replace the following
+example ModPerl Apache configuration (example, needs to be reviewed):
+
+    ## Apache 1 example
+
+    <Perl>
+      use lib qw( /var/www/MyApp/lib );
+    </Perl>
+
+    <Location />
+      SetHandler       perl-script
+      PerlHandler      MyApp
+    </Location>
+
+
+    ## Apache 2 example
+
+    PerlSwitches -I/var/www/MyApp/lib
+    PerlModule MyApp
+
+    <Location />
+      SetHandler          modperl
+      PerlResponseHandler MyApp
+    </Location>
+
+With the following PSGI / Plack example, and recommend people consider updating
+their code if they are using the 'classic' approach.  This should be an ungrade
+that requires no new code to support (example, needs to be reviewed):
+
+    ## Apache 1 example
+
+    <Location />
+      SetHandler perl-script
+      PerlHandler Plack::Handler::Apache1
+      PerlSetVar psgi_app /path/to/app.psgi
+    </Location>
+     
+    <Perl>
+      use Plack::Handler::Apache1;
+      Plack::Handler::Apache1->preload("/path/to/app.psgi");
+    </Perl>
+
+    ## Apache 2 example
+    <Location />
+      SetHandler perl-script
+      PerlResponseHandler Plack::Handler::Apache2
+      PerlSetVar psgi_app /path/to/app.psgi
+    </Location>
+
+Going forward the second approach would be prefered, since if the application
+does not need $c->apache then you don't even need the backcompat Plugin at
+all (see next point.)
+
+=item Backcompat Plugin
+
+For people that cannot perform this Apache configuration upgrade, or who
+have code that is using $c->apache, we will write a new Catalyst::Plugin that
+extracts the existing ModPerl handler code from Catalyst.pm while adding back
+the missing $c->apache method.  This plugin will be a stand alone distribution
+but will be made a dependency for the Catalyst core code and automatically
+installed if $ENV{MOD_PERL} is true.  However this will be considered a
+deprecation cycle for this feature, and people will be encouraged to make sure
+they start to include the stand alone distribution in their application
+Makefile.pl / dist.ini / cpanfile or custom installation tool, as well as add
+the plugin to the list of plugins that are installed with their application.
+
+There should be clear documentation for all this in Upgrading.POD so that
+someone who is upgrading Catalyst can upgrade in steps and follow instructions
+such to place the minimal burden on the upgrade process (support the idea that
+upgrading should require only configuration changes or installation of back-
+compat plugins.)
+
+=back
+
+=head1 Better Integration of Unicode
+
+In the previous development cycle we cored the Encoding::Unicode plugin.  Now
+we would like to better integrate that plugin code directly into the core code.
+This would make it easier for code maintainers to understand the what is going
+on with the code, since plugins change code behavior 'at a distance' and you
+may not immediately understand what is happening.  In addition the code should
+perform a bit better, since the method modification approach that plugins use
+tend to introduce some performance penalty.  Lastly, we hope it will make it
+easier to improve unicode support in the future.  We propose
+
+=over 4
+
+=item Integrate logic
+
+move all logic in the cored Encoding::Plugin to Catalyst.pm or to other files
+as makes sense.
+
+=item Clear out Plugin
+
+Make the cored Encoding::Plugin empty, but remaining in the distribution for
+now in order to overwrite existing plugins people might have if they are
+upgrading from an older Catalyst.  We should warn in the docs that this empty
+body plugin will eventually disappear.
+
+=item Backcompat with existing Plugin users
+
+Make sure that we detect and disable attempts to install the stand alone
+plugin and warn users that they need to remove it.  For example if someone has
+code like:
+
+    use Catalyst qw/Encoding::Unicode/;
+
+We should skip applying that plugin, but instead warn that the plugin has been
+deprecated.
+
+Additionally, if someone tries to apply the deprecated plugin, we should check
+$c->config->{encoding} and warn if there is no value (since this is now required
+in the cored behavior, and also set the value to 'UTF8'.
+
+=item Double check documentation
+
+We should review the unicode documentation for correctness.
+
+=item Review Catalyst::Manual
+
+We should make sure the existing L<Catalyst::Manual> does not recommend this
+plugin since it is no longer required
+
+=back
+
+=head1 Make sure the entire test suite passes under 'parse_on_demand'
+
+In the current version of Catalyst, the Request body is automatically parsed
+which prevents optimizations and customizations around this potentially
+expensive process.  Future versions of Catalyst may wish to make
+'parse_on_demand' the default in order to be able to move the platform
+forward.  In support of this goal, we should make sure all relevent tests
+in the existing test suite support this options (we can exclude those tests
+which are explicitly looking for pre-parsed bodies)
+
+This can by created a new %ENV flag, CATALYST_PARSE_ON_DEMAND which sets the
+option, and running the test suite with it enabled.  Code should be fixed if
+possible to make sure it all works as expected
+
+=head1 New Request attribute ->body_fh
+
+In current Catalyst a request body is preparsed into a Perl data structure
+and any file fileloads are saved into temporary files.  Although this is
+handy default behavior, it is somewhat outdated since it does not support 
+common methods of posting data to a webserver (no built in JSON post support
+for example) and it does not easily allow nonblocking reading of large posted
+files, or event based parsing (think using SAX to parse an XML upload so that
+you'd not have to load the entire parsed file into memory).  We'd like to 
+allow people to experiment with these kinds of use cases.
+
+To support this, add a new method $c->req->body_fh which is enabled with the
+configuration option 'parse_on_demand' which return a simple file handle
+representing the posted body or upload before we attempt to process it.
+This will enable people (for example) to create streaming and nonblocking
+processing of post or file uploads (using a supported loop) and custom
+means to store it.
+
+This attribute is only available when 'parse_on_demand' is set.  In addition,
+once you request this attribute, you cannot access the traditional post or
+file upload methods on request, since you've started a custom processing
+cycle.
+
+=over 4
+
+=item New Request attribute C<body_fh>
+
+Add a new attribute C<body_fh> which exposes C<psgi.input> to the user.  This
+should only be available if parse_on_demand is true and if the we have not already
+requested post_parameters and any other methods that read psgi.input
+
+=item disallow use of body_fh with other existing methods
+
+Error when calling post_parameters and similar methods should we have already
+requested a body_fh in the given request lifecycle.
+
+=item Documentation
+
+Added documentation and test cases.
+
+=item Proof of concept and example
+
+Use case examples should be written (adding to PerlCatalystAsync example
+codebase of github.)
+
+=back
+
+=head1 Alternative method for accessing request parameters.
+
+Miyagawa doesn't think highly of the Catalyst approach to accessing request
+parameters.  See: L<Hash::MultiValue\RATIONALE> for more.
+
+Although there are other, valid approaches to solving this (For example, one
+might use L<Autobox>, there's something to be said for doing the right thing
+well enough out of the box as to not trip up newcomers.  So we propose:
+
+=over 4
+
+=item new configuration option C<use_hash_merge_request_parameters>
+
+Create and document a new global configuation option C<use_hash_merge_request_parameters>
+which when enabled (it defaults to false) uses L<Hash::Merge> style parameters.
+
+=item Update Catalyst Project Helper
+
+new projects should default to using C<use_hash_merge_request_parameters>.
+
+=back
+
+=head1 Canonicalize Support for nested data in request parameters
+
+Although it has become increasingly common for people to use JSON to support
+complex data in HTTP POST/PUT, there are still cases where it is desirable
+to support the idea of having a canonical approach for this using classic
+HTML Form POST.  Additionally, some popular Javascript frameworks, such as
+JQuery, by default hint POST parameters in such a way as to yield unexpected
+results.
+
+We propose the addition of a new Catalyst configuration option that would enable
+the functionality currently found in the standalone plugin 
+L<Catalyst::Plugin::Params::Nested>.  This would default to false for backward
+compatibiliy purposes, but would be recommended for new projects.
+
+Coring this would also allow for more careful integration of the recent Unicode
+support added to core and hopefully lead to some possible optimizations or support
+for evented code in core.
+
+=over 4
+
+=item New Configuration option to enable nested data in HTML form parameters
+
+A new configuration option C<enable_nested_request_parameters> which defaults
+to false, and when enabled will examine and expand classic HTML form parameters
+in the same way as Catalyst::Plugin::Params::Nested.
+
+Documentation and tests to match, and in addition there should be notes in the
+Upgrading.POD for people that use the existing Plugin.
+
+=item Alerts for existing users
+
+We should detect that someone is enabling the plugin at setup time, and notice
+them that they can remove the plugin and just enable the configuation option
+
+=item Deprecation notice in exising plugin
+
+We need a new release of L<Catalyst::Plugin::Params::Nested> that lets people
+know if they are using the recent L<Catalyst> they can just enable the built
+in features.
+
+=item Update L<Catalyst::Devel>
+
+The default helper script should create a new project with this enabled
+
+=back
+
+=head1 $c->config->{name} should has a sensible default
+
+This configuration setting is used primarily in debugging screens and lacks a
+default.  Given the relative low value here, it would be great if we did not
+require a new application to set it manually, but instead we would infer a value
+equal to __PACKAGE__ of the application subclass, which is the recommended
+default anyone.
+
+This would stop newbies from using something insane and reduce the number of
+boilerplate configurations settings necessary in bootstrapping an application (
+this has the benefit of doing the right thing by default and maybe a tiny step
+in addressing the L<Catalyst> is a heavyweight framework meme.)
+
+For this project to be successful, one would need three test cases.  One that
+should the default working as expected with no configuration.  Second and third
+demonstrating the ability to override the default as expected in ->config or
+using a configuration plugin like L<ConfigLoader> (third test should skip if
+L<ConfigLoader is not present).  In addition all existing tests should pass
+and documentation updated.  We could also remove this as a default built by
+the project skeleton in L<Catalyst::Devel>.
+
+=head1 Declare PSGI Middleware as Application Level Configuration
+
+Since version 5.9x, Catalyst use L<PSGI>, L<Plack> but we don't have a good API
+or community approved approach for exposing PSGI in applications, for reusing
+middleware and in general interoperating with other PSGI based applications.
+
+Being able to do so would broaden the available toolset for Catalyst programmers
+while hopefully letting us better pool the limited resources for development
+with programmers in other frameworks.  It has a possible long term side effect
+that we might be able to deprecate some existing stand alone and L<Catalyst>
+specific plugins, thus reducing the total amount of core team development
+effort (for example, Plack middleware for serving static files could replace
+the stand alone static plugin, and by deprecating it we'd reduce by one the
+total number of plugins we need to test with each new release of L<Catalyst>.
+
+There is an additional side effect in that if we are able to replace plugins
+with middleware it reduces that fear, loathing associated with changing parts
+of the L<Catalyst> internal API, since many plugins reach deep into L<Catalyst>
+internals, making changing those internals harder, whereas L<Plack> middleware
+does not have this issue.
+
+Two distributions on CPAN have experimented with this idea,
+L<Catalyst::Plugin::EnableMiddleware> and L<Catalyst::Action::FromPSGI>. Both
+show the value of the concept, but as stand alone systems they are not as well
+integrated as thye might be.  Being able to declare Plack middleware at the
+application and controller level would benefit the project (particularly
+at the controller/ action level, which would reduce total load for cases when
+you don't need certain plugins).  For the first iteration lets find a neat
+way to bring applying middleware at the application level, which will give us
+good experience and some good use cases we can reuse when applying that to
+the controller and action level.
+
+We should have good use case tests for some of the more popular and commonly
+used middleware.
+
+=head1 $c->response should not be changable 
+
+Although in some cases on older versions of L<Catalyst> setting
+$c->response($res) manually would seem to work, we can't really support this
+properly for streaming and async responses, and on newer L<Catalyst>.  Its
+actually now quite tricky to build a $response by hand (requires a copy
+of the current context and a few other bits).  Currently this is most commonly
+seen in some test cases and when using the plugin L<Catalyst::Plugin::SubRequest>
+which is itself problematic.  Given that this is very unlikely to do what you
+want and that it interferes with core development as a sort of dark API,
+lets start warning when people try to set $c->response, and ideally some docs
+outlining strategies for a proper way to do this, with appropriate caveats
+regarding streaming, etc.
+
+=head1 Catalyst::Controller should set @INC and load all needed imports
+
+Currently when creating a controller one must declare a confusing amount of
+boilerplate code, For example:
+
+    MyApp::Web::Controller::User;
+
+    use Moose;
+
+    BEGIN { extends 'Catalyst::Controller' }
+
+    ## code, code, code
+
+
+In particular the BEGIN block always is good for a double take.
+
+The reasons for this are many, and some have to do with how L<Catalyst> auto
+loads components, while other reasons exist for backcompatiblity.  The
+proposal is to let L<Catalyst::Controller> do more lifting such that you
+could just do
+
+    MyApp::Web::Controller::User;
+
+    use Moose;
+    use Catalyst::Controller;
+
+    ## code, code, code
+
+This would have multiple benefits:
+
+It would encourage people to extend Controllers using Roles and delegation
+over inheritance.
+
+It would make it easier for people experimenting with DSL approaches by
+providing a canonical hook (and allow for the possibility of having some DSL
+in core itself).
+
+We could avoid our current problems with how L<MooseX::MethodAttributes> gets
+installed
+
+It would make it more similar to the way the application class is declared (for
+better or worse).
+
+There's a bit less code in each controller (probably means a lot less code in a
+typical L<Catalyst> Application)
+
+The main downsides is that it subtly moves us away from the idea that a
+controller is just a plain old Perl class, and that there may be other and more
+carefully scoped solutions to the problem given.
+
+=cut
+
+
