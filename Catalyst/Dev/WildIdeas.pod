@@ -483,6 +483,48 @@ B<Note> This idea probably needs more discussion, for example I assume we don't
 want to import the standard Moose keywords, but how are we going to make it
 easy for people that want to plugin new keyword imports do so.
 
+=head1 Limited Content Negotiation Features
+
+Given the state of the Catalyst dispatcher, it will probably not be easy to
+support rich RESTful content negotiation features, to the degree that a
+dedicated approach such as L<Web::Machine> could.  However, many people don't
+want or need a full on RESTful toolkit, but might find it desireable to support
+a limited ablity to match actions based on common types (forms, JSON, etc).
+
+We could straightforwardly support content request and response matching, but
+using Catalyst's built in 'first match wins' approach, rather than attempt to
+provide complex action matching features based on 'q' or quality numbers.  This
+would look something like this:
+
+    sub get_json : Local Provides(JSON) { }
+    sub get_json : Local Consumes(JSON) { }
+    sub get_xml : Local Provides(XML) { }
+    sub parse_xml : Local Consumes(XML) { }
+
+We'd leavage method attributes C<Provides> and C<Consumes> as this would be
+familiar to similiar systems in other software frameworks (we could probably
+take some inspiration from these approaches.
+
+(See https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
+for a working prototype, just please do use that code in production.)
+
+People that just wish to support the abililty to dispatch based on if a form
+POST is JSON or form-data would find this useful.  This first iteration
+would not support all of the automatic generation of HTTP header information,
+etc. you might expect but there is nothing in taking such a route that would
+prevent us from doing so in the future (or for someone to experiment with
+in the extended L<Catalyst> ecosystem.
+
+The downside is that its far from a full on RESTful system, but then again
+most people don't seem to really want that.
+
+=head1 PROTOTYPE: Do something meanful with action return types
+
+  TBD, but see https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
+
+  Other possibilities include supporting return values similar to L<Web::Simple>
+  such as plack applications, middleware and filters.
+
 =head1 PROTOYPE:  Do something sane with action return values
 
   TBD, but see https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
@@ -490,6 +532,22 @@ easy for people that want to plugin new keyword imports do so.
 =head1 PROTOTYPE:  Method Signature dependency injection
 
   TBD, but see https://github.com/jjn1056/CatalystX-Example-Todo/blob/master/lib/CatalystX/Example/Todo/Web/Controller/API.pm
+
+=head1 Use L<Bread::Board> in replacement of existing homegrown service locator
+
+There's been on ongoing project to graft B<Bread::Board> into L<Catalyst>.  The
+current B<TODO> list is here:
+
+  https://trello.com/board/catalyst-development/501045ab15f0c0e51e041192
+
+But the project probably needs a reboot.  More details required, for now see
+the trello list and discuss on IRC.
+
+=head1 Convert all existing L<Catalyst::DispatchTypes> to use Chained
+
+It would greatly simplify the existing dispatch system and hopefully lead to
+more chances for optimization in the future.
+
 =cut
 
 
