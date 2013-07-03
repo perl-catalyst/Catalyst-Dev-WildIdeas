@@ -599,7 +599,7 @@ t0m has an existing branch for this, which should help a lot.
 
 I think we'd expect this to be considered done if the full test suite passes
 as well as the test suites of the major plugins and stand alones models
-and applications on CPAN.
+and applications on CPAN (list to be determined).
 
 =cut
 
