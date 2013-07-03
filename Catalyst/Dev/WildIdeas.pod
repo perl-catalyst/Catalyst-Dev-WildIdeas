@@ -74,9 +74,43 @@ that requires no new code to support (example, needs to be reviewed):
       PerlSetVar psgi_app /path/to/app.psgi
     </Location>
 
-Going forward the second approach would be prefered, since if the application
-does not need $c->apache then you don't even need the backcompat Plugin at
-all (see next point.)
+Alternatively, if you don't have or want a *.psgi file, you could just create
+a subclass of correct handler.
+
+    ## Apache 1 example
+
+    package MyApp::Apache1Handler;
+    
+    use Plack::Handler::Apache1;
+    use MyApp::Web; # This is you Catalyst Application
+
+    sub handler {
+      Plack::Handler::Apache1->call_app(shift, MyApp::Web->psgi_app)
+    }
+
+    ## Apache 2 example
+
+    package MyApp::Apache2Handler;
+    
+    use Plack::Handler::Apache2;
+    use MyApp::Web; # This is you Catalyst Application
+
+    sub handler {
+      Plack::Handler::Apache2->call_app(shift, MyApp::Web->psgi_app)
+    }
+    
+    1;
+
+B<NOTE> You might need to wrap MyApp::Web->psgi_app in Myapp::Web->apply_default_middleware
+to get all the expected behaviors.
+
+You could then just s/MyApp::Web/MyApp::Apache[1|2]Handler/ in you apache.conf
+file and avoid the need to create a stand alone psgi file if you don't already
+have one.
+
+Going forward the second/third approach would be prefered, since if the
+application does not need $c->apache then you don't even need the backcompat
+Plugin at all (see next point.)
 
 =item Backcompat Plugin
 
@@ -186,6 +220,9 @@ This attribute is only available when 'parse_on_demand' is set.  In addition,
 once you request this attribute, you cannot access the traditional post or
 file upload methods on request, since you've started a custom processing
 cycle.
+
+B<NOTE> We should verify that the C<body_fh> works as expected even with stream
+and chunked request POSTS.  Might or might not require some coordinate with
 
 =over 4
 
@@ -497,7 +534,7 @@ provide complex action matching features based on 'q' or quality numbers.  This
 would look something like this:
 
     sub get_json : Local Provides(JSON) { }
-    sub get_json : Local Consumes(JSON) { }
+    sub parse_json : Local Consumes(JSON) { }
     sub get_xml : Local Provides(XML) { }
     sub parse_xml : Local Consumes(XML) { }
 
@@ -545,8 +582,24 @@ the trello list and discuss on IRC.
 
 =head1 Convert all existing L<Catalyst::DispatchTypes> to use Chained
 
+The main issue I think is that Chained actions have somewhat of a hacky
+aspect to them, (including how CaptureArgs get mapped to regular args, for
+example, ust take a look at the source) but the chain of command paradigm it
+introduces is quite powerful and someone unique to L<Catalyst>.  The idea here
+is that the standard dispatch types like Local and Path would be translated
+under the hood to be instances of a a one action chain.  
+
 It would greatly simplify the existing dispatch system and hopefully lead to
 more chances for optimization in the future.
+
+The only downside I see is it might be a little slower since there's going
+to be a bit more overhead per action.
+
+t0m has an existing branch for this, which should help a lot.
+
+I think we'd expect this to be considered done if the full test suite passes
+as well as the test suites of the major plugins and stand alones models
+and applications on CPAN.
 
 =cut
 
