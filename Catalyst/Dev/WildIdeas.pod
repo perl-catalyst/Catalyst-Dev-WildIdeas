@@ -322,7 +322,7 @@ This configuration setting is used primarily in debugging screens and lacks a
 default.  Given the relative low value here, it would be great if we did not
 require a new application to set it manually, but instead we would infer a value
 equal to __PACKAGE__ of the application subclass, which is the recommended
-default anyone.
+default anyway.
 
 This would stop newbies from using something insane and reduce the number of
 boilerplate configurations settings necessary in bootstrapping an application (
