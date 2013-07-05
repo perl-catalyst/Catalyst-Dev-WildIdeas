@@ -68,8 +68,11 @@ that requires no new code to support (example, needs to be reviewed):
     </Perl>
 
     ## Apache 2 example
+
+    PerlLoadModule MyApp
+
     <Location />
-      SetHandler perl-script
+      SetHandler modperl
       PerlResponseHandler Plack::Handler::Apache2
       PerlSetVar psgi_app /path/to/app.psgi
     </Location>
@@ -85,7 +88,7 @@ a subclass of correct handler.
     use MyApp::Web; # This is you Catalyst Application
 
     sub handler {
-      Plack::Handler::Apache1->call_app(shift, MyApp::Web->psgi_app)
+      Plack::Handler::Apache1->call_app(shift, MyApp::Web->_finalize_psgi_app)
     }
 
     ## Apache 2 example
@@ -96,7 +99,7 @@ a subclass of correct handler.
     use MyApp::Web; # This is you Catalyst Application
 
     sub handler {
-      Plack::Handler::Apache2->call_app(shift, MyApp::Web->psgi_app)
+      Plack::Handler::Apache2->call_app(shift, MyApp::Web->_finalize_psgi_app)
     }
     
     1;
@@ -428,15 +431,48 @@ use a stable tranport API like L<HTTP::Message>.  This should cover most of the
 rationally supportable cases people want a subrequest for and give us code we feel
 is supportable over the long term (and in core so we can keep an eye on it)
 
-Reach goals could include setting a $c->config value or somesuch as to force
-the subrequest to use a 'real' request via LWP or similar for troublesome
-situations (or perhaps more API like $c->subrequest_local and $c->subrequest_remote)
-and maybe supporting L<Web::Request> / L<Web::Response> since that seems to do
-better support for streaming out of the box and maybe L<Plack::Request>,
-L<Plack::Response> even though Miyagawa says please don't.
+In order to distinguish between internal and external subrequests, we could 
+leverage ideas presented in L<Plack::Client> and use a custom URL scheme, like:
+
+    use HTTP::Request::Common;
+    my $http_response = $c->subrequest(
+      POST $c->uri_for($target)->scheme('psgi-local'), \@formdata);
+
+This would issue an interal subrequest, which does not trigger a full HTTP cycle
+and in theory could be faster, but has the following issue:
+
+B<ISSUE:> If we use a method other than the current subrequest plugin that is
+base on URL or URI rather than trying to dispatch to an action in particular we
+can have trouble IF the L<Catalyst> Application is wrapped in custom plack
+middleware and/or mounted under a different URL namespace.  Since the current
+Catalyst application can't really know anything going on outside its own
+application space, (no real introspection in L<Plack>) the safest thing is
+always going to be to issue a true LWP style http request.
 
 B<Question:> Should we care now about asynchronicity or can that be deferred for
 a later time (does deferring it now paint us into a corner...)
+
+B<Question:>  Would we prefer to have this under the L<Catalyst::Util> or some
+alternative namespace, as in:
+
+    use HTTP::Request::Common;
+    use Catalyst::Util 'subrequest';
+
+    my $http_response = $c->subrequest(
+      POST $c->uri_for($target)->scheme('psgi-local'), \@formdata);
+
+Which would assist in controlling API inflation in Catalyst.pm as well as let
+us add different methods and helper methods, for example:
+
+    use Catalyst::Util ':Subrequest';
+    my $http_response = $c->ubrequest(POST '/user', \@formdata );
+
+Or even:
+
+    $c->subrequest::POST( $uri_args, \@formdata);
+
+This could be under L<Catalyst::Util> or under some new namespace such as 
+L<Catalyst::Util::Subrequest>.
 
 =head1 Support other common content body types in request
 
